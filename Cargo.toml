@@ -17,5 +17,6 @@ codegen-units = 1
 [dependencies]
 hashbrown = "0.11"
 once_cell = "1"
+rand = "0.8"
 pyo3 = { version = "0.16", features = ["extension-module"] }
 egg = "0.9.1"
