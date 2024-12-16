@@ -1,10 +1,14 @@
-use egg::{AstSize, EGraph, Extractor, Id, Pattern, PatternAst, RecExpr, Rewrite, Runner, Var};
+use egg::{AstSize, EGraph, Extractor, Id, Language, Pattern, PatternAst, RecExpr, Rewrite, Runner, Var};
 use pyo3::types::{PyList, PyString, PyTuple};
 use pyo3::{basic::CompareOp, prelude::*};
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
+
+use rand::rngs::ThreadRng;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 
 use crate::lang::{PythonAnalysis, PythonApplier, PythonNode};
 use crate::util::{build_node, build_pattern};
@@ -191,6 +195,13 @@ impl PyEGraph {
             })
             .collect()
     }
+
+    #[args(exprs = "*")]
+    fn random_extract(&mut self, py: Python, expr: &PyAny) -> PyResult<PyObject> {
+        let id = self.add(expr).0;
+        let recexpr = random_extract_expr(id, &self.egraph)?;
+        Ok(reconstruct(py, &recexpr))
+    }
 }
 
 fn reconstruct(py: Python, recexpr: &RecExpr<PythonNode>) -> PyObject {
@@ -200,4 +211,45 @@ fn reconstruct(py: Python, recexpr: &RecExpr<PythonNode>) -> PyObject {
         objs.push(obj)
     }
     objs.pop().unwrap()
+}
+
+fn random_extract_expr(
+    id: Id,
+    egraph: &EGraph<PythonNode, PythonAnalysis>,
+) -> PyResult<RecExpr<PythonNode>> {
+    let mut rng = thread_rng();
+    let mut expr = RecExpr::default();
+    let mut memo = std::collections::HashMap::new();
+
+    fn helper(
+        id: Id,
+        egraph: &EGraph<PythonNode, PythonAnalysis>,
+        expr: &mut RecExpr<PythonNode>,
+        memo: &mut std::collections::HashMap<Id, Id>,
+        rng: &mut ThreadRng,
+    ) -> Id {
+        if let Some(&index) = memo.get(&id) {
+            return index;
+        }
+
+        let enodes = &egraph[id].nodes;
+        let node = enodes.choose(rng).unwrap();
+
+        let new_children = node
+            .children()
+            .iter()
+            .map(|&child_id| helper(child_id, egraph, expr, memo, rng))
+            .collect::<Vec<_>>();
+        let mut new_children_iter = new_children.into_iter();
+
+        let new_node = node.clone().map_children(|_child_id| new_children_iter.next().unwrap());
+        let index = expr.add(new_node);
+
+        memo.insert(id, index);
+        index
+    }
+
+    helper(id, egraph, &mut expr, &mut memo, &mut rng);
+
+    Ok(expr)
 }
